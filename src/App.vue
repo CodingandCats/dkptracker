@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import EventList from './components/EventList.vue'
 import PlayerStats from './components/PlayerStats.vue'
 import CreateEvent from './components/CreateEvent.vue'
-import { supabase } from './lib/supabase'
+import { firebase } from './lib/firebase'
 
 const activeTab = ref('events')
 const events = ref([])
@@ -12,23 +12,35 @@ const loading = ref(true)
 
 const fetchEvents = async () => {
   try {
-    const { data, error } = await supabase
-      .from('events')
-      .select(`
-        *,
-        attendances (
-          id,
-          player_id,
-          players (
-            discord_id,
-            username
-          )
-        )
-      `)
-      .order('created_at', { ascending: false })
+    // Get events
+    const eventsResult = await firebase.from('events').select('*').order('created_at', { ascending: false })
+    if (eventsResult.error) throw eventsResult.error
     
-    if (error) throw error
-    events.value = data || []
+    // Get attendances and players for each event
+    const eventsWithAttendances = await Promise.all(
+      (eventsResult.data || []).map(async (event) => {
+        const attendancesResult = await firebase.from('attendances').select('*').eq('event_id', event.id)
+        const attendances = attendancesResult.data || []
+        
+        // Get player info for each attendance
+        const attendancesWithPlayers = await Promise.all(
+          attendances.map(async (attendance) => {
+            const playerResult = await firebase.from('players').select('*').eq('id', attendance.player_id).single()
+            return {
+              ...attendance,
+              players: playerResult.data || {}
+            }
+          })
+        )
+        
+        return {
+          ...event,
+          attendances: attendancesWithPlayers
+        }
+      })
+    )
+    
+    events.value = eventsWithAttendances
   } catch (error) {
     console.error('Error fetching events:', error)
   }
@@ -36,23 +48,35 @@ const fetchEvents = async () => {
 
 const fetchPlayers = async () => {
   try {
-    const { data, error } = await supabase
-      .from('players')
-      .select(`
-        *,
-        attendances (
-          id,
-          dkp_awarded,
-          events (
-            name,
-            date
-          )
-        )
-      `)
-      .order('total_dkp', { ascending: false })
+    // Get players
+    const playersResult = await firebase.from('players').select('*').order('total_dkp', { ascending: false })
+    if (playersResult.error) throw playersResult.error
     
-    if (error) throw error
-    players.value = data || []
+    // Get attendances for each player
+    const playersWithAttendances = await Promise.all(
+      (playersResult.data || []).map(async (player) => {
+        const attendancesResult = await firebase.from('attendances').select('*').eq('player_id', player.id)
+        const attendances = attendancesResult.data || []
+        
+        // Get event info for each attendance
+        const attendancesWithEvents = await Promise.all(
+          attendances.map(async (attendance) => {
+            const eventResult = await firebase.from('events').select('*').eq('id', attendance.event_id).single()
+            return {
+              ...attendance,
+              events: eventResult.data || {}
+            }
+          })
+        )
+        
+        return {
+          ...player,
+          attendances: attendancesWithEvents
+        }
+      })
+    )
+    
+    players.value = playersWithAttendances
   } catch (error) {
     console.error('Error fetching players:', error)
   }

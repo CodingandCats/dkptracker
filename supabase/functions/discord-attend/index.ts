@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'npm:@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,6 +14,35 @@ interface AttendRequest {
   }
 }
 
+const FIREBASE_URL = 'https://dkptracker-6121c-default-rtdb.firebaseio.com'
+
+// Helper function to make Firebase REST API calls
+async function firebaseRequest(path: string, method: string = 'GET', data?: any) {
+  const url = `${FIREBASE_URL}${path}.json`
+  const options: RequestInit = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  }
+  
+  if (data) {
+    options.body = JSON.stringify(data)
+  }
+  
+  const response = await fetch(url, options)
+  return await response.json()
+}
+
+// Helper function to find record by field value
+async function findByField(table: string, field: string, value: string) {
+  const data = await firebaseRequest(`/${table}`)
+  if (!data) return null
+  
+  const key = Object.keys(data).find(k => data[k][field] === value)
+  return key ? { id: key, ...data[key] } : null
+}
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -22,12 +50,6 @@ serve(async (req) => {
   }
 
   try {
-    // Initialize Supabase client
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
-
     if (req.method !== 'POST') {
       return new Response(
         JSON.stringify({ error: 'Method not allowed' }),
@@ -51,13 +73,8 @@ serve(async (req) => {
     }
 
     // Check if event exists
-    const { data: event, error: eventError } = await supabaseClient
-      .from('events')
-      .select('id, name, dkp_reward')
-      .eq('id', event_id)
-      .single()
-
-    if (eventError || !event) {
+    const event = await firebaseRequest(`/events/${event_id}`)
+    if (!event) {
       return new Response(
         JSON.stringify({ error: 'Event not found' }),
         { 
@@ -68,47 +85,32 @@ serve(async (req) => {
     }
 
     // Get or create player
-    let { data: player, error: playerSelectError } = await supabaseClient
-      .from('players')
-      .select('*')
-      .eq('discord_id', discord_user.id)
-      .single()
-
-    if (playerSelectError && playerSelectError.code !== 'PGRST116') {
-      throw playerSelectError
-    }
+    let player = await findByField('players', 'discord_id', discord_user.id)
 
     if (!player) {
       // Create new player
-      const { data: newPlayer, error: playerInsertError } = await supabaseClient
-        .from('players')
-        .insert({
-          discord_id: discord_user.id,
-          username: discord_user.username,
-          total_dkp: 0
-        })
-        .select()
-        .single()
-
-      if (playerInsertError) throw playerInsertError
-      player = newPlayer
+      const newPlayerData = {
+        discord_id: discord_user.id,
+        username: discord_user.username,
+        total_dkp: 0,
+        created_at: new Date().toISOString()
+      }
+      
+      const newPlayerKey = await firebaseRequest('/players', 'POST', newPlayerData)
+      player = { id: newPlayerKey.name, ...newPlayerData }
     } else {
       // Update username if it changed
       if (player.username !== discord_user.username) {
-        await supabaseClient
-          .from('players')
-          .update({ username: discord_user.username })
-          .eq('id', player.id)
+        await firebaseRequest(`/players/${player.id}`, 'PATCH', { username: discord_user.username })
+        player.username = discord_user.username
       }
     }
 
     // Check if already attending
-    const { data: existingAttendance } = await supabaseClient
-      .from('attendances')
-      .select('id')
-      .eq('event_id', event_id)
-      .eq('player_id', player.id)
-      .single()
+    const attendances = await firebaseRequest('/attendances')
+    const existingAttendance = attendances ? Object.values(attendances).find((att: any) => 
+      att.event_id === event_id && att.player_id === player.id
+    ) : null
 
     if (existingAttendance) {
       return new Response(
@@ -125,32 +127,25 @@ serve(async (req) => {
     }
 
     // Record attendance
-    const { error: attendanceError } = await supabaseClient
-      .from('attendances')
-      .insert({
-        event_id: event_id,
-        player_id: player.id,
-        dkp_awarded: event.dkp_reward
-      })
-
-    if (attendanceError) throw attendanceError
+    const attendanceData = {
+      event_id: event_id,
+      player_id: player.id,
+      dkp_awarded: event.dkp_reward,
+      created_at: new Date().toISOString()
+    }
+    
+    await firebaseRequest('/attendances', 'POST', attendanceData)
 
     // Update player's total DKP
-    const { error: updateError } = await supabaseClient
-      .from('players')
-      .update({
-        total_dkp: player.total_dkp + event.dkp_reward
-      })
-      .eq('id', player.id)
-
-    if (updateError) throw updateError
+    const newTotalDkp = player.total_dkp + event.dkp_reward
+    await firebaseRequest(`/players/${player.id}`, 'PATCH', { total_dkp: newTotalDkp })
 
     return new Response(
       JSON.stringify({
         success: true,
         message: `${discord_user.username} successfully registered for ${event.name}`,
         dkp_awarded: event.dkp_reward,
-        new_total_dkp: player.total_dkp + event.dkp_reward
+        new_total_dkp: newTotalDkp
       }),
       { 
         status: 200, 

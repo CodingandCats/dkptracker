@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { Calendar, Users, Award, ExternalLink } from 'lucide-vue-next'
-import { supabase } from '../lib/supabase'
+import { firebase } from '../lib/firebase'
 
 defineProps({
   events: Array
@@ -32,39 +32,42 @@ const simulateDiscordAttendance = async (eventId) => {
     }
 
     // First, create or get the player
-    const { data: existingPlayer } = await supabase
+    const existingPlayerResult = await firebase
       .from('players')
       .select('*')
       .eq('discord_id', mockDiscordUser.discord_id)
       .single()
+    
+    const existingPlayer = existingPlayerResult.data
 
     let playerId
     if (existingPlayer) {
       playerId = existingPlayer.id
     } else {
-      const { data: newPlayer, error: playerError } = await supabase
+      const newPlayerResult = await firebase
         .from('players')
         .insert({
           discord_id: mockDiscordUser.discord_id,
           username: mockDiscordUser.username,
           total_dkp: 0
         })
-        .select()
-        .single()
 
-      if (playerError) throw playerError
-      playerId = newPlayer.id
+      if (newPlayerResult.error) throw newPlayerResult.error
+      playerId = newPlayerResult.data.id
     }
 
     // Get event details for DKP calculation
-    const { data: event } = await supabase
+    const eventResult = await firebase
       .from('events')
-      .select('dkp_reward')
+      .select('*')
       .eq('id', eventId)
       .single()
+    
+    const event = eventResult.data
+    if (!event) throw new Error('Event not found')
 
     // Record attendance
-    const { error: attendanceError } = await supabase
+    const attendanceResult = await firebase
       .from('attendances')
       .insert({
         event_id: eventId,
@@ -72,18 +75,17 @@ const simulateDiscordAttendance = async (eventId) => {
         dkp_awarded: event.dkp_reward
       })
 
-    if (attendanceError) throw attendanceError
+    if (attendanceResult.error) throw attendanceResult.error
 
     // Update player's total DKP
-    const { error: updateError } = await supabase
+    const updateResult = await firebase
       .from('players')
       .update({
         total_dkp: existingPlayer ? existingPlayer.total_dkp + event.dkp_reward : event.dkp_reward
       })
       .eq('id', playerId)
 
-    if (updateError) throw updateError
-
+    if (updateResult.error) throw updateResult.error
     emit('attendance-updated')
   } catch (error) {
     console.error('Error processing attendance:', error)

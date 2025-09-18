@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { Calendar, Award, FileText, Plus } from 'lucide-vue-next'
-import { supabase } from '../lib/supabase'
+import { firebase } from '../lib/firebase'
 
 const emit = defineEmits(['event-created'])
 
@@ -23,7 +23,7 @@ const createEvent = async () => {
   creating.value = true
 
   try {
-    const { error } = await supabase
+    const result = await firebase
       .from('events')
       .insert({
         name: form.value.name,
@@ -32,7 +32,7 @@ const createEvent = async () => {
         dkp_reward: form.value.dkp_reward
       })
 
-    if (error) throw error
+    if (result.error) throw result.error
 
     // Reset form
     form.value = {
