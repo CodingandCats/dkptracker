@@ -1,100 +1,147 @@
-# DKP Event Attendance Tracker
+# DKP Event Attendance Tracker (Firebase)
 
-A Vue.js application for tracking Discord event attendance and managing DKP (Dragon Kill Points) for gaming guilds.
+A Vue.js application for tracking Discord event attendance and managing DKP (Dragon Kill Points) for gaming guilds using Firebase Realtime Database.
 
 ## Features
 
 - **Event Management**: Create and manage events with customizable DKP rewards
 - **Player Tracking**: Automatic player registration and DKP accumulation
-- **Discord Integration**: REST API endpoint for Discord bot integration
+- **Discord Integration**: Firebase REST API integration for Discord bots
 - **Real-time Updates**: Live attendance tracking and leaderboards
 - **Responsive Design**: Beautiful, modern UI that works on all devices
 
 ## Setup
 
-1. **Database Setup**: 
-   - Click "Connect to Supabase" in the top right to set up your database
-   - The database schema will be automatically created
+1. **Firebase Setup**: 
+   - The app is configured to use Firebase Realtime Database at: `https://dkptracker-6121c-default-rtdb.firebaseio.com/`
+   - No additional setup required - the database structure will be created automatically
 
-2. **Environment Variables**:
-   - Copy `.env.example` to `.env`
-   - Fill in your Supabase credentials
+2. **Database Structure**:
+   The app will automatically create these collections:
+   - `events/` - Event information
+   - `players/` - Player profiles and DKP totals
+   - `attendances/` - Attendance records linking events and players
 
 3. **Discord Bot Integration**:
-   - Use the provided Supabase Edge Function at `/functions/v1/discord-attend`
-   - Send POST requests when users click "attend" in Discord
+   - Use the Firebase REST API directly in your Discord bot
+   - Send requests to Firebase when users click "attend" in Discord
 
 ## Discord Bot Integration
 
-Your Discord bot should send POST requests to:
-```
-https://your-supabase-url.supabase.co/functions/v1/discord-attend
-```
+Your Discord bot can interact directly with Firebase using the REST API:
 
-With payload:
+### Create Attendance Record
+POST to: `https://dkptracker-6121c-default-rtdb.firebaseio.com/attendances.json`
 ```json
 {
-  "event_id": "uuid-of-event-from-your-app",
-  "discord_user": {
-    "id": "discord_user_id",
-    "username": "discord_username"
-  }
+  "event_id": "event-key-from-firebase",
+  "player_id": "player-key-from-firebase", 
+  "dkp_awarded": 10,
+  "created_at": "2024-01-01T00:00:00.000Z"
 }
 ```
 
-## Example Discord Bot Code (Discord.js)
+### Get Events
+GET: `https://dkptracker-6121c-default-rtdb.firebaseio.com/events.json`
+
+### Create/Update Player
+POST/PATCH: `https://dkptracker-6121c-default-rtdb.firebaseio.com/players.json`
+
+## Example Discord Bot Code (Discord.js with Firebase)
 
 ```javascript
-const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 
-// Create event command
-const eventCommand = new SlashCommandBuilder()
-  .setName('event')
-  .setDescription('Create an attendance event')
-  .addStringOption(option =>
-    option.setName('event_id')
-      .setDescription('Event ID from DKP tracker')
-      .setRequired(true)
-  );
+const FIREBASE_URL = 'https://dkptracker-6121c-default-rtdb.firebaseio.com';
 
-// Handle button interactions
+async function recordAttendance(eventId, discordUser) {
+  try {
+    // Get or create player
+    const playersResponse = await fetch(`${FIREBASE_URL}/players.json`);
+    const players = await playersResponse.json();
+    
+    let playerId = null;
+    let playerData = null;
+    
+    if (players) {
+      const existingPlayer = Object.entries(players).find(([key, player]) => 
+        player.discord_id === discordUser.id
+      );
+      
+      if (existingPlayer) {
+        playerId = existingPlayer[0];
+        playerData = existingPlayer[1];
+      }
+    }
+    
+    if (!playerId) {
+      // Create new player
+      const newPlayerResponse = await fetch(`${FIREBASE_URL}/players.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          discord_id: discordUser.id,
+          username: discordUser.username,
+          total_dkp: 0,
+          created_at: new Date().toISOString()
+        })
+      });
+      const result = await newPlayerResponse.json();
+      playerId = result.name;
+      playerData = { total_dkp: 0 };
+    }
+    
+    // Get event details
+    const eventResponse = await fetch(`${FIREBASE_URL}/events/${eventId}.json`);
+    const event = await eventResponse.json();
+    
+    if (!event) throw new Error('Event not found');
+    
+    // Record attendance
+    await fetch(`${FIREBASE_URL}/attendances.json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_id: eventId,
+        player_id: playerId,
+        dkp_awarded: event.dkp_reward,
+        created_at: new Date().toISOString()
+      })
+    });
+    
+    // Update player DKP
+    const newTotalDkp = playerData.total_dkp + event.dkp_reward;
+    await fetch(`${FIREBASE_URL}/players/${playerId}.json`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ total_dkp: newTotalDkp })
+    });
+    
+    return {
+      success: true,
+      dkp_awarded: event.dkp_reward,
+      new_total_dkp: newTotalDkp
+    };
+  } catch (error) {
+    console.error('Error recording attendance:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 client.on('interactionCreate', async interaction => {
   if (interaction.isButton() && interaction.customId.startsWith('attend_')) {
     const eventId = interaction.customId.replace('attend_', '');
     
-    try {
-      const response = await fetch('https://your-supabase-url.supabase.co/functions/v1/discord-attend', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY}`
-        },
-        body: JSON.stringify({
-          event_id: eventId,
-          discord_user: {
-            id: interaction.user.id,
-            username: interaction.user.username
-          }
-        })
-      });
-
-      const result = await response.json();
-      
-      if (result.success) {
-        await interaction.reply({
-          content: `✅ ${result.message}\n🏆 DKP Awarded: ${result.dkp_awarded}\n📊 Total DKP: ${result.new_total_dkp}`,
-          ephemeral: true
-        });
-      } else {
-        await interaction.reply({
-          content: `ℹ️ ${result.message}`,
-          ephemeral: true
-        });
-      }
-    } catch (error) {
-      console.error('Error:', error);
+    const result = await recordAttendance(eventId, interaction.user);
+    
+    if (result.success) {
       await interaction.reply({
-        content: '❌ Error processing attendance. Please try again.',
+        content: `✅ Attendance recorded!\n🏆 DKP Awarded: ${result.dkp_awarded}\n📊 Total DKP: ${result.new_total_dkp}`,
+        ephemeral: true
+      });
+    } else {
+      await interaction.reply({
+        content: `❌ Error: ${result.error}`,
         ephemeral: true
       });
     }
@@ -105,10 +152,10 @@ client.on('interactionCreate', async interaction => {
 ## Tech Stack
 
 - **Frontend**: Vue 3 + Vite
-- **Database**: Supabase (PostgreSQL)
+- **Database**: Firebase Realtime Database
 - **Styling**: Tailwind CSS
 - **Icons**: Lucide Vue
-- **Backend**: Supabase Edge Functions (Deno)
+- **Backend**: Firebase REST API
 
 ## Development
 
@@ -118,4 +165,4 @@ npm run dev
 
 ## Deployment
 
-The app can be deployed to any static hosting service. Make sure to set up your Supabase project and configure the environment variables.
+The app can be deployed to any static hosting service. The Firebase database is already configured and ready to use.
