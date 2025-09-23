@@ -22,32 +22,12 @@
   </div>
 </template>
 <script setup>
-import { ref, onMounted } from "vue";
-import { useDatabase } from "@/composables/useDatabase";
-import { ref as dbRef, onValue } from "firebase/database"; // Alias 'ref' to avoid conflict with Vue's ref
-
-// const userName = ref("Loading...");
-const db = useDatabase();
-// const userName = ref("Loading...");
-
-async function fetchUserName() {
-  if (db) {
-    const userRef = dbRef(db, "dkp/");
-    await onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        desserts.value = Object.entries(data)
-          .map(([key, value]) => ({
-            id: key,
-            ...value,
-          }))
-          .sort((a, b) => a.user.localeCompare(b.user)); // Sort alphabetically by user
-      }
-    });
-  }
-}
+import { ref, onMounted, inject } from "vue";
+import { ref as dbRef, onValue } from "firebase/database";
 
 const search = ref("");
+const desserts = ref([]);
+const db = inject("db");
 const headers = [
   {
     align: "center",
@@ -57,9 +37,46 @@ const headers = [
   },
   { key: "dkp", align: "center", title: "DKP" },
 ];
-const desserts = ref([]);
 
-onMounted(async () => {
+async function fetchUserName() {
+  if (!db) {
+    console.error("Database not available");
+    return;
+  }
+
+  try {
+    console.log("Attempting to fetch data from path: dkp/");
+    const userRef = dbRef(db, "dkp/");
+    return onValue(
+      userRef,
+      (snapshot) => {
+        console.log("Snapshot received:", snapshot.exists(), snapshot.val());
+        const data = snapshot.val();
+        if (data) {
+          console.log("Processing data:", data);
+          const processedData = Object.entries(data).map(([key, value]) => ({
+            id: key,
+            ...value,
+          }));
+          console.log("Processed data:", processedData);
+          desserts.value = processedData.sort((a, b) =>
+            a.user.localeCompare(b.user)
+          );
+        } else {
+          console.log("No data found in snapshot");
+          desserts.value = [];
+        }
+      },
+      (error) => {
+        console.error("Database read error:", error);
+      }
+    );
+  } catch (error) {
+    console.error("Error setting up database listener:", error);
+  }
+}
+
+onMounted(() => {
   fetchUserName();
 });
 </script>

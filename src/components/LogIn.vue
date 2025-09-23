@@ -1,41 +1,83 @@
 <template>
-  <v-card class="pa-5" max-width="600" outlined>
+  <div>
+    <h2>Email/Password Authentication</h2>
     <input type="email" v-model="email" placeholder="Email" />
     <input type="password" v-model="password" placeholder="Password" />
     <button @click="signUp">Sign Up</button>
     <button @click="signIn">Sign In</button>
-  </v-card>
+    <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
+  </div>
 </template>
 
-<script setup>
-import { ref } from "vue";
-import { useAuth } from "@/composables/useAuth";
+<script>
+import { defineComponent, ref, inject } from "vue";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
 } from "firebase/auth";
+import { ref as dbRef, set } from "firebase/database"; // Import for DB access
 
-const auth = useAuth();
-const email = ref("");
-const password = ref("");
+export default defineComponent({
+  name: "LogIn",
+  setup() {
+    const email = ref("");
+    const password = ref("");
+    const errorMsg = ref(null);
 
-const signUp = async () => {
-  try {
-    await createUserWithEmailAndPassword(auth, email.value, password.value);
-    console.log("User signed up!");
-    // User is now signed up, you can redirect or update UI
-  } catch (error) {
-    console.error("Error signing up:", error.message);
-  }
-};
+    // Inject the Firebase Auth and DB instances
+    const auth = inject("auth");
+    const db = inject("db");
+    console.log(db);
 
-const signIn = async () => {
-  try {
-    await signInWithEmailAndPassword(auth, email.value, password.value);
-    console.log("User signed in!");
-    // User is now signed in
-  } catch (error) {
-    console.error("Error signing in:", error.message);
-  }
-};
+    if (!auth || !db) {
+      console.error("Firebase Auth or Database not provided!");
+      errorMsg.value = "Authentication services not available.";
+      return {}; // Return empty if services aren't available
+    }
+
+    const signUp = async () => {
+      errorMsg.value = null; // Clear previous errors
+      try {
+        const userCredential = await createUserWithEmailAndPassword(
+          auth,
+          email.value,
+          password.value
+        );
+        const user = userCredential.user;
+        const currentUid = user.uid;
+        console.log("User signed up! UID:", currentUid);
+
+        // Store initial user data in Realtime Database
+        const userProfileRef = dbRef(db, `users/${currentUid}/profile`);
+        await set(userProfileRef, {
+          email: user.email,
+          createdAt: new Date().toISOString(),
+        });
+        console.log("User profile created in RTDB.");
+      } catch (error) {
+        console.error("Error signing up:", error.message);
+        errorMsg.value = error.message;
+      }
+    };
+
+    const signIn = async () => {
+      errorMsg.value = null; // Clear previous errors
+      try {
+        await signInWithEmailAndPassword(auth, email.value, password.value);
+        console.log("User signed in!");
+      } catch (error) {
+        console.error("Error signing in:", error.message);
+        errorMsg.value = error.message;
+      }
+    };
+
+    return { email, password, signUp, signIn, errorMsg };
+  },
+});
 </script>
+
+<style scoped>
+.error {
+  color: red;
+}
+</style>

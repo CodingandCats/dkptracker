@@ -1,22 +1,30 @@
-// src/router/index.ts
-import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
-import { useAuth } from '../composables/useAuth'; // Import your auth composable
+// src/router/index.js
+import { createRouter, createWebHistory } from "vue-router";
+import { useAuth } from "../composables/useAuth"; // Import your auth composable
 
-import DkpTable from '../components/DkpTable.vue'; // Example views
-import Login from '../components/LogIn.vue';
+// Example views - make sure these exist or adjust paths
 
-const routes: Array<RouteRecordRaw> = [
-
+import LogIn from "../components/LogIn.vue";
+import DkpTable from "../components/DkpTable.vue";
+const routes = [
   {
-    path: '/dashboard',
-    name: 'Dashboard',
-    component: DkpTable,
-    meta: { requiresAuth: true } // <--- Mark this route as protected
+    path: "/",
+    redirect: "/login",
   },
   {
-    path: '/login',
-    name: 'Login',
-    component: Login,
+    path: "/dkp-table",
+    name: "dkp-table",
+    component: DkpTable,
+    meta: { requiresAuth: true }, // <--- Mark this route as protected
+  },
+  {
+    path: "/log-in",
+    name: "login",
+    component: LogIn,
+  },
+  {
+    path: "/:pathMatch(.*)*",
+    redirect: "/dkp-table",
   },
   // ... other routes
 ];
@@ -34,21 +42,20 @@ router.beforeEach(async (to, from, next) => {
     await authReady; // Wait for the auth state to be known
   }
 
-  const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
+  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
 
   if (requiresAuth && !currentUser.value) {
     // If the route requires auth and the user is NOT logged in, redirect to login page
     console.log("Redirecting to login. Requires auth but user is null.");
-    next({ name: 'Login' });
-  } else if ((to.name === 'Login' || to.name === 'Register') && currentUser.value) {
+    next({ name: "login" });
+  } else if (to.name === "login" && currentUser.value) {
     // If user is logged in and trying to access login/register page, redirect to home/dashboard
     console.log("Redirecting from login/register. User is already logged in.");
-    next({ name: 'Dashboard' }); // Or a suitable authenticated landing page
+    next({ name: "dkp-table" }); // Or a suitable authenticated landing page
   } else {
     // Otherwise, allow navigation
     next();
   }
 });
-
 
 export default router;

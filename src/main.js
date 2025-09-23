@@ -1,8 +1,6 @@
 import { createApp } from "vue";
 import { createVuetify } from "vuetify";
-import { DB_KEY } from "./composables/useDatabase";
-
-// import router from "./router/index"; // Assuming you have your router setup here
+import router from "./router"; // Assuming you have your router setup here
 
 import "vuetify/styles";
 import * as components from "vuetify/components";
@@ -11,8 +9,8 @@ import App from "./App.vue";
 
 // Assuming you've already run: npm install firebase
 import { initializeApp } from "firebase/app";
-import { getDatabase } from "firebase/database";
 import { getAuth } from "firebase/auth";
+import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyARl2Ai3AP9JPwKeZ-vustpvsC5RNW-YD4",
@@ -25,16 +23,20 @@ const firebaseConfig = {
 };
 
 const firebaseApp = initializeApp(firebaseConfig);
-const db = getDatabase(firebaseApp);
 const auth = getAuth(firebaseApp);
+const dbInstance = getDatabase(firebaseApp);
+
+console.log("main.js: dbInstance after getDatabase:", dbInstance);
 
 const vuetify = createVuetify({
   components,
   directives,
 });
+
 const app = createApp(App);
-app.provide(DB_KEY, db);
+app.provide("db", dbInstance);
 app.provide("auth", auth); // Provide auth to all components
 
 app.use(vuetify);
+app.use(router);
 app.mount("#app");
